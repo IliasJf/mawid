@@ -4,7 +4,7 @@
 
 **[Try the live demo](https://iliasjf.github.io/mawid/)** with a fictional Casablanca barbershop. Bookings stay in your browser. The owner view is at [`#/owner`](https://iliasjf.github.io/mawid/#/owner).
 
-The same app runs for a real shop on a Cloudflare Worker with a D1 database: customers and the owner share one set of bookings, and the owner's side is behind a PIN. See [Run it for a real shop](#run-it-for-a-real-shop).
+The same app runs for a real shop on a Cloudflare Worker with a D1 database: customers and the owner share one set of bookings, and the owner's side is behind a PIN. It's live at **[mawid.iliasjf.workers.dev](https://mawid.iliasjf.workers.dev/)**, still with the demo barbershop. See [Run it for a real shop](#run-it-for-a-real-shop).
 
 ## What it does
 

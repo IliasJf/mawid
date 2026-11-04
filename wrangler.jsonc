@@ -5,6 +5,9 @@
   "name": "mawid",
   "main": "worker/index.ts",
   "compatibility_date": "2026-10-01",
+  // Served at https://mawid.<account>.workers.dev; no per-version preview links.
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./dist-server",
     "binding": "ASSETS",
@@ -14,8 +17,8 @@
     {
       "binding": "DB",
       "database_name": "mawid",
-      // Replace with the id `wrangler d1 create mawid` prints.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // From `wrangler d1 create mawid`. A new client gets its own database and id.
+      "database_id": "e2641177-ceb9-42d7-9a5b-b590952167b4",
       "migrations_dir": "migrations"
     }
   ],
