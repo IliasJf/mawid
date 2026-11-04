@@ -3,6 +3,8 @@ import { BookPage } from "./booking/BookPage.tsx";
 import { ManagePage } from "./booking/ManagePage.tsx";
 import { OwnerPage } from "./owner/OwnerPage.tsx";
 import { COPY } from "./lib/copy.ts";
+import { REMOTE, useStore } from "./lib/store.ts";
+import { Gate } from "./ui.tsx";
 import type { Lang } from "./lib/types.ts";
 
 /** Routes live in the hash so the demo works on any static host: #/, #/manage, #/owner/<tab>?day=… */
@@ -56,6 +58,10 @@ export function App() {
     } catch {}
   };
   const props = { t, lang, setLang, route };
+  const scope = route.path[0] === "owner" ? "owner" : "public";
+  const { status, scope: loaded } = useStore(scope);
+  // On a real shop's server, nothing renders until this page's view of the shop has arrived.
+  if (REMOTE && (status !== "ready" || loaded !== scope)) return <Gate {...props} scope={scope} status={loaded === scope ? status : "loading"} />;
   if (route.path[0] === "owner") return <OwnerPage {...props} />;
   if (route.path[0] === "manage") return <ManagePage {...props} />;
   return <BookPage {...props} />;

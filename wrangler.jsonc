@@ -1,0 +1,23 @@
+// The real deployment: one Worker serves the app and its API, with the shop in D1.
+// Before the first deploy, see "Run it for a real shop" in the README.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mawid",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist-server",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mawid",
+      // Replace with the id `wrangler d1 create mawid` prints.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}

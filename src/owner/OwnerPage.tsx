@@ -2,33 +2,27 @@ import { useEffect, useState } from "react";
 import type { PageProps } from "../App.tsx";
 import { go } from "../App.tsx";
 import type { Copy } from "../lib/copy.ts";
-import { dayLong, minutes, price } from "../lib/format.ts";
+import { dayLong, minutes, price, whatsappUrl } from "../lib/format.ts";
 import {
-  BookingError,
-  addBlock,
   addDays,
   availableSlots,
-  book,
   clock,
   displayPhone,
   isDate,
-  moveBooking,
   parseClock,
-  removeBlock,
-  revert,
-  setStatus,
   shopNow,
   staffFor,
-  updateService,
   weekday,
   workWindow,
 } from "../lib/schedule.ts";
-import { getShop, resetShop, saveShop, useShop } from "../lib/store.ts";
+import { ownerOp, problemText, signOut, type OpResult } from "../lib/backend.ts";
+import type { OwnerOp } from "../lib/ops.ts";
+import { REMOTE, getShop, resetShop, useShop } from "../lib/store.ts";
 import type { Booking, BookingStatus, DayHours, Lang, Shop } from "../lib/types.ts";
 import { Field, LanguagePicker } from "../ui.tsx";
 
-type Tab = "agenda" | "bookings" | "services" | "hours";
-const TABS: Tab[] = ["agenda", "bookings", "services", "hours"];
+type Tab = "agenda" | "bookings" | "reminders" | "services" | "hours";
+const TABS: Tab[] = ["agenda", "bookings", "reminders", "services", "hours"];
 
 interface Toast {
   message: string;
@@ -45,15 +39,25 @@ export function OwnerPage({ t, lang, setLang, route }: PageProps) {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  /** Every change goes through here: saved at once, with an undo where it matters. */
-  const commit = (next: Shop, message: string, undoable = false) => {
-    const before = getShop();
-    saveShop(next);
-    setToast({ message, undo: undoable ? { before, after: next } : undefined });
+  /**
+   * Every change goes through here, as an operation the shop's rules check
+   * (on the server for a real shop). Undo brings back only what it changed.
+   * A form shows its own problem inline; anything else shows it in the toast.
+   */
+  const commit: Commit = async (op, message, { undoable = false, inline = false } = {}) => {
+    try {
+      const result = await ownerOp(op);
+      setToast({ message, undo: undoable ? result.undo : undefined });
+      return result;
+    } catch (cause) {
+      if (!inline) setToast({ message: problemText(t, cause) });
+      throw cause;
+    }
   };
   const tabLabel: Record<Tab, string> = {
     agenda: t.agenda,
     bookings: t.bookingsTab,
+    reminders: t.remindersTab,
     services: t.servicesTab,
     hours: t.hoursTab,
   };
@@ -82,19 +86,28 @@ export function OwnerPage({ t, lang, setLang, route }: PageProps) {
       <main className="container owner" id="main">
         {tab === "agenda" && <Agenda shop={shop} t={t} lang={lang} route={route} commit={commit} />}
         {tab === "bookings" && <Bookings shop={shop} t={t} lang={lang} route={route} commit={commit} />}
+        {tab === "reminders" && <Reminders shop={shop} t={t} lang={lang} commit={commit} />}
         {tab === "services" && <Services shop={shop} t={t} lang={lang} commit={commit} />}
         {tab === "hours" && <Hours shop={shop} t={t} commit={commit} />}
         <footer className="page-foot">
-          <span>{t.demoNote}</span>
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => {
-              if (confirm(t.resetConfirm)) resetShop();
-            }}
-          >
-            {t.resetDemo}
-          </button>
+          {REMOTE ? (
+            <button type="button" className="link-button" onClick={() => void signOut()}>
+              {t.signOut}
+            </button>
+          ) : (
+            <>
+              <span>{t.demoNote}</span>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => {
+                  if (confirm(t.resetConfirm)) resetShop();
+                }}
+              >
+                {t.resetDemo}
+              </button>
+            </>
+          )}
         </footer>
       </main>
       <div className="toast-region" role="status" aria-live="polite">
@@ -106,8 +119,9 @@ export function OwnerPage({ t, lang, setLang, route }: PageProps) {
                 type="button"
                 onClick={() => {
                   // Only this change goes back; a booking made meanwhile stays.
-                  saveShop(revert(getShop(), toast.undo!.before, toast.undo!.after));
+                  const { before, after } = toast.undo!;
                   setToast(null);
+                  void commit({ type: "revert", before, after }, t.saved).catch(() => {});
                 }}
               >
                 {t.undo}
@@ -125,11 +139,14 @@ interface TabProps {
   t: Copy;
   lang: Lang;
   route: PageProps["route"];
-  commit: (next: Shop, message: string, undoable?: boolean) => void;
+  commit: Commit;
 }
+type Commit = (op: OwnerOp, message: string, options?: { undoable?: boolean; inline?: boolean }) => Promise<OpResult>;
+/** For buttons: the toast already shows any problem. */
+const quietly = (p: Promise<unknown>) => void p.catch(() => {});
 
 function StatusActions({ booking, t, commit }: { booking: Booking; t: Copy; commit: TabProps["commit"] }) {
-  const change = (status: BookingStatus) => commit(setStatus(getShop(), booking.id, status), t.statusChanged, true);
+  const change = (status: BookingStatus) => quietly(commit({ type: "status", id: booking.id, status }, t.statusChanged, { undoable: true }));
   if (booking.status !== "booked")
     return (
       <div className="status-actions">
@@ -248,7 +265,7 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
                           {t.blocked}
                           {b.reason && `: ${b.reason}`}
                         </span>
-                        <button type="button" className="sheet-block-remove" aria-label={`${t.removeBlock} ${clock(b.start)}`} onClick={() => commit(removeBlock(getShop(), b.id), t.saved, true)}>
+                        <button type="button" className="sheet-block-remove" aria-label={`${t.removeBlock} ${clock(b.start)}`} onClick={() => quietly(commit({ type: "unblock", id: b.id }, t.saved, { undoable: true }))}>
                           ×
                         </button>
                       </div>
@@ -408,6 +425,7 @@ function NewBookingForm({
   const services = shop.services.filter((s) => s.active);
   const [form, setForm] = useState({ serviceId: services[0]?.id ?? "", staffChoice: "any", start: "", name: "", phone: "" });
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const now = shopNow();
   const slots = availableSlots(shop, form.serviceId, form.staffChoice, day, now, { by: "owner" });
   const start = slots.some((s) => String(s.start) === form.start) ? form.start : String(slots[0]?.start ?? "");
@@ -415,21 +433,20 @@ function NewBookingForm({
     <form
       className="block-form stock"
       noValidate
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
+        if (busy) return;
+        setBusy(true);
         try {
-          const result = book(
-            getShop(),
-            { serviceId: form.serviceId, staffChoice: form.staffChoice, date: day, start: Number(start), name: form.name, phone: form.phone, by: "owner" },
-            shopNow(),
-          );
-          commit(result.shop, t.bookingAdded, true);
+          const request = { serviceId: form.serviceId, staffChoice: form.staffChoice, date: day, start: Number(start), name: form.name, phone: form.phone };
+          const result = await commit({ type: "book", request }, t.bookingAdded, { undoable: true, inline: true });
           setError("");
           setForm((f) => ({ ...f, start: "", name: "", phone: "" }));
-          onAdded(result.booking.id);
+          onAdded(result.booking!.id);
         } catch (cause) {
-          if (cause instanceof BookingError) setError(t.errors[cause.code]);
-          else throw cause;
+          setError(problemText(t, cause));
+        } finally {
+          setBusy(false);
         }
       }}
     >
@@ -497,8 +514,8 @@ function NewBookingForm({
           {error}
         </p>
       )}
-      <button className="btn btn--ink btn--block" type="submit" disabled={!slots.length}>
-        {t.addBooking}
+      <button className="btn btn--ink btn--block" type="submit" disabled={!slots.length} aria-busy={busy || undefined}>
+        {busy ? t.saving : t.addBooking}
       </button>
     </form>
   );
@@ -521,6 +538,7 @@ function MoveForm({
   const now = shopNow();
   const [form, setForm] = useState({ date: booking.date < now.date ? now.date : booking.date, staffChoice: booking.staffId, start: "" });
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const slots = isDate(form.date)
     ? availableSlots(shop, booking.serviceId, form.staffChoice, form.date, now, { by: "owner", ignore: booking.id }).filter(
         (s) => !(form.date === booking.date && s.start === booking.start),
@@ -531,15 +549,18 @@ function MoveForm({
     <form
       className="move-form"
       noValidate
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
+        if (busy) return;
+        setBusy(true);
         try {
-          const result = moveBooking(getShop(), booking.id, { date: form.date, start: Number(start), staffChoice: form.staffChoice }, shopNow());
-          commit(result.shop, t.bookingMoved, true);
-          onDone(result.booking.date);
+          const move = { date: form.date, start: Number(start), staffChoice: form.staffChoice };
+          const result = await commit({ type: "move", id: booking.id, move }, t.bookingMoved, { undoable: true, inline: true });
+          onDone(result.booking!.date);
         } catch (cause) {
-          if (cause instanceof BookingError) setError(t.errors[cause.code]);
-          else throw cause;
+          setError(problemText(t, cause));
+        } finally {
+          setBusy(false);
         }
       }}
     >
@@ -575,8 +596,8 @@ function MoveForm({
         </p>
       )}
       <div className="status-actions">
-        <button className="btn btn--small btn--ink" type="submit" disabled={!slots.length}>
-          {t.saveMoveOwner}
+        <button className="btn btn--small btn--ink" type="submit" disabled={!slots.length} aria-busy={busy || undefined}>
+          {busy ? t.saving : t.saveMoveOwner}
         </button>
         <button className="btn btn--small btn--quiet" type="button" onClick={() => onDone(booking.date)}>
           {t.keepTime}
@@ -590,22 +611,23 @@ function BlockForm({ shop, t, day, commit }: { shop: Shop; t: Copy; day: string;
   const staff = shop.staff.filter((s) => s.active);
   const [form, setForm] = useState({ staffId: staff[0]?.id ?? "", from: "14:00", to: "15:00", reason: "" });
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   return (
     <form
       className="block-form stock"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
+        if (busy) return;
+        setBusy(true);
         try {
-          commit(
-            addBlock(getShop(), { staffId: form.staffId, date: day, start: parseClock(form.from), end: parseClock(form.to), reason: form.reason }),
-            t.saved,
-            true,
-          );
+          const block = { staffId: form.staffId, date: day, start: parseClock(form.from), end: parseClock(form.to), reason: form.reason };
+          await commit({ type: "block", block }, t.saved, { undoable: true, inline: true });
           setError("");
           setForm((f) => ({ ...f, reason: "" }));
         } catch (cause) {
-          if (cause instanceof BookingError) setError(t.errors[cause.code]);
-          else throw cause;
+          setError(problemText(t, cause));
+        } finally {
+          setBusy(false);
         }
       }}
     >
@@ -635,8 +657,8 @@ function BlockForm({ shop, t, day, commit }: { shop: Shop; t: Copy; day: string;
           {error}
         </p>
       )}
-      <button className="btn btn--card btn--block" type="submit">
-        {t.saveBlock}
+      <button className="btn btn--card btn--block" type="submit" aria-busy={busy || undefined}>
+        {busy ? t.saving : t.saveBlock}
       </button>
     </form>
   );
@@ -742,6 +764,68 @@ function Bookings({ shop, t, lang, route, commit }: TabProps) {
   );
 }
 
+// ---------- reminders: tomorrow's customers, one WhatsApp each ----------
+
+function Reminders({ shop, t, lang, commit }: Omit<TabProps, "route">) {
+  const tomorrow = addDays(shopNow().date, 1);
+  const rows = shop.bookings
+    .filter((b) => b.date === tomorrow && b.status === "booked" && b.customer.phone)
+    .sort((a, b) => a.start - b.start);
+  // The customer's own page for changing or cancelling, on this same site.
+  const link = `${location.origin}${location.pathname}#/manage`;
+  return (
+    <section aria-labelledby="reminders-title">
+      <div className="owner-head">
+        <h1 id="reminders-title">{dayLong(t, tomorrow)}</h1>
+      </div>
+      <p className="owner-sub">{t.remindersLead}</p>
+      {rows.length ? (
+        <ul className="reminders stock">
+          {rows.map((b) => {
+            const service = shop.services.find((s) => s.id === b.serviceId)?.name[lang] ?? "";
+            const staff = shop.staff.find((s) => s.id === b.staffId)?.name ?? "";
+            const text = t.reminderMessage({
+              name: b.customer.name.split(" ")[0],
+              shop: shop.business.name,
+              service,
+              day: dayLong(t, b.date),
+              time: clock(b.start),
+              staff,
+              code: b.code,
+              link,
+            });
+            return (
+              <li key={b.id} className="reminder" data-sent={b.remindedAt ? true : undefined}>
+                <span className="fig reminder-time">{clock(b.start)}</span>
+                <span className="reminder-who">
+                  <strong>{b.customer.name}</strong>
+                  <span className="cell-sub">
+                    {service} · {staff}
+                  </span>
+                </span>
+                <span className="reminder-action">
+                  {b.remindedAt && <span className="cell-sub">{t.remindedAt(b.remindedAt.slice(11))}</span>}
+                  <a
+                    className={`btn btn--small ${b.remindedAt ? "btn--card" : "btn--ink"}`}
+                    href={whatsappUrl(b.customer.phone, text)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => quietly(commit({ type: "reminded", id: b.id }, t.saved))}
+                  >
+                    {b.remindedAt ? t.sendAgain : t.sendReminder}
+                  </a>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="empty-note stock">{t.noReminders}</p>
+      )}
+    </section>
+  );
+}
+
 // ---------- services and hours ----------
 
 const DURATIONS = [10, 15, 20, 25, 30, 40, 45, 50, 60, 75, 90, 120];
@@ -770,7 +854,7 @@ function Services({ shop, t, lang, commit }: Omit<TabProps, "route">) {
                   <select
                     aria-label={`${t.duration}: ${s.name[lang]}`}
                     value={s.minutes}
-                    onChange={(e) => commit(updateService(getShop(), { ...s, minutes: Number(e.target.value) }), t.saved)}
+                    onChange={(e) => quietly(commit({ type: "service", service: { ...s, minutes: Number(e.target.value) } }, t.saved))}
                   >
                     {[...new Set([...DURATIONS, s.minutes])].sort((a, b) => a - b).map((m) => (
                       <option key={m} value={m}>
@@ -789,7 +873,7 @@ function Services({ shop, t, lang, commit }: Omit<TabProps, "route">) {
                       defaultValue={s.price}
                       onBlur={(e) => {
                         const value = Number(e.target.value);
-                        if (Number.isInteger(value) && value >= 0 && value !== s.price) commit(updateService(getShop(), { ...s, price: value }), t.saved);
+                        if (Number.isInteger(value) && value >= 0 && value !== s.price) quietly(commit({ type: "service", service: { ...s, price: value } }, t.saved));
                         else e.target.value = String(s.price);
                       }}
                     />
@@ -801,7 +885,7 @@ function Services({ shop, t, lang, commit }: Omit<TabProps, "route">) {
                     type="checkbox"
                     aria-label={`${t.active}: ${s.name[lang]}`}
                     checked={s.active}
-                    onChange={(e) => commit(updateService(getShop(), { ...s, active: e.target.checked }), t.saved, true)}
+                    onChange={(e) => quietly(commit({ type: "service", service: { ...s, active: e.target.checked } }, t.saved, { undoable: true }))}
                   />
                 </td>
               </tr>
@@ -816,10 +900,9 @@ function Services({ shop, t, lang, commit }: Omit<TabProps, "route">) {
 function Hours({ shop, t, commit }: { shop: Shop; t: Copy; commit: TabProps["commit"] }) {
   const order = [1, 2, 3, 4, 5, 6, 0]; // Monday first, as the week reads in Morocco
   const setDay = (day: number, value: DayHours) => {
-    const current = getShop();
-    const hours = [...current.business.hours] as Shop["business"]["hours"];
+    const hours = [...getShop().business.hours] as Shop["business"]["hours"];
     hours[day] = value;
-    commit({ ...current, business: { ...current.business, hours } }, t.saved, true);
+    quietly(commit({ type: "hours", hours }, t.saved, { undoable: true }));
   };
   return (
     <section aria-labelledby="hours-title">

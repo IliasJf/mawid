@@ -1,15 +1,9 @@
 import { useMemo, useState } from "react";
 import type { PageProps } from "../App.tsx";
-import {
-  BookingError,
-  availableSlots,
-  bookableDates,
-  cancelByCustomer,
-  findBooking,
-  moveByCustomer,
-  shopNow,
-} from "../lib/schedule.ts";
-import { getShop, saveShop, useShop } from "../lib/store.ts";
+import { BookingError, availableSlots, bookableDates } from "../lib/schedule.ts";
+import { cancelVisit, findVisit, moveVisit, problemText } from "../lib/backend.ts";
+import { useShop } from "../lib/store.ts";
+import type { Booking } from "../lib/types.ts";
 import { Field, LanguagePicker } from "../ui.tsx";
 import { AppointmentCard } from "./AppointmentCard.tsx";
 import { SlotPicker, useShopNow } from "./SlotPicker.tsx";
@@ -19,12 +13,14 @@ export function ManagePage({ t, lang, setLang }: PageProps) {
   const shop = useShop();
   const [code, setCode] = useState("");
   const [phone, setPhone] = useState("");
-  const [found, setFound] = useState<{ code: string; phone: string } | null>(null);
+  // What the customer typed, and their booking as the shop last returned it.
+  const [found, setFound] = useState<{ code: string; phone: string; booking: Booking } | null>(null);
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [changing, setChanging] = useState(false);
   const [moved, setMoved] = useState(false);
   const now = useShopNow();
-  const booking = found ? findBooking(shop, found.code, found.phone) : undefined;
+  const booking = found?.booking;
   const [date, setDate] = useState("");
   const [start, setStart] = useState<number | null>(null);
 
@@ -45,15 +41,31 @@ export function ManagePage({ t, lang, setLang }: PageProps) {
     [shop, booking?.id, booking?.date, booking?.start, now, dates.join()],
   );
 
+  /** Runs one request to the shop, showing its problem if it fails. */
+  async function attempt(fn: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fn();
+      setError("");
+    } catch (cause) {
+      setError(problemText(t, cause));
+      if (cause instanceof BookingError && cause.code === "slot-taken") setStart(null);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function lookup(e: React.FormEvent) {
     e.preventDefault();
-    if (findBooking(getShop(), code, phone)) {
-      setFound({ code, phone });
-      setError("");
-    } else {
-      setFound(null);
-      setError(t.notFound);
-    }
+    void attempt(async () => {
+      try {
+        setFound({ code, phone, booking: await findVisit(code, phone) });
+      } catch (cause) {
+        setFound(null);
+        throw cause;
+      }
+    });
   }
   function startChange() {
     if (!booking) return;
@@ -70,27 +82,17 @@ export function ManagePage({ t, lang, setLang }: PageProps) {
       setError(t.chooseFirst);
       return;
     }
-    try {
-      saveShop(moveByCustomer(getShop(), found.code, found.phone, { date, start, staffChoice: "any" }, shopNow()).shop);
+    void attempt(async () => {
+      const next = await moveVisit(found.code, found.phone, { date, start, staffChoice: "any" });
+      setFound({ ...found, booking: next });
       setChanging(false);
       setMoved(true);
-      setError("");
       scrollTo({ top: 0 });
-    } catch (cause) {
-      if (!(cause instanceof BookingError)) throw cause;
-      setError(t.errors[cause.code]);
-      if (cause.code === "slot-taken") setStart(null);
-    }
+    });
   }
   function cancel() {
     if (!found || !confirm(t.cancelConfirm)) return;
-    try {
-      saveShop(cancelByCustomer(getShop(), found.code, found.phone, shopNow()));
-      setError("");
-    } catch (cause) {
-      if (cause instanceof BookingError) setError(t.errors[cause.code]);
-      else throw cause;
-    }
+    void attempt(async () => setFound({ ...found, booking: await cancelVisit(found.code, found.phone) }));
   }
 
   return (
@@ -139,7 +141,7 @@ export function ManagePage({ t, lang, setLang }: PageProps) {
                 {error}
               </p>
             )}
-            <button className="btn btn--ink btn--block" type="submit">
+            <button className="btn btn--ink btn--block" type="submit" aria-busy={busy || undefined}>
               {t.find}
             </button>
           </form>
@@ -178,7 +180,7 @@ export function ManagePage({ t, lang, setLang }: PageProps) {
                   }}
                 />
                 <div className="manage-actions">
-                  <button className="btn btn--ink" type="submit">
+                  <button className="btn btn--ink" type="submit" aria-busy={busy || undefined}>
                     {t.saveMove}
                   </button>
                   <button className="btn btn--quiet" type="button" onClick={() => setChanging(false)}>

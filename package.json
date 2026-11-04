@@ -12,7 +12,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/*.test.ts"
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "build:server": "vite build --mode server",
+    "dev:server": "vite --mode server",
+    "api": "npm run build:server && wrangler d1 migrations apply mawid --local && wrangler dev --port 8787",
+    "deploy": "npm run build:server && wrangler d1 migrations apply mawid --remote && wrangler deploy"
   },
   "dependencies": {
     "react": "^19.2.6",
@@ -24,6 +28,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "typescript": "5.9",
-    "vite": "^7.3.7"
+    "vite": "^7.3.7",
+    "wrangler": "^4.157.0"
   }
 }

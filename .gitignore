@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .hallmark/
 mawid-*.png
+dist-server/
+.wrangler/
+.dev.vars

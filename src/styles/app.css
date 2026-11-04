@@ -1202,6 +1202,66 @@ textarea:hover {
   }
 }
 
+/* ---------- owner: reminders ---------- */
+.reminders {
+  list-style: none;
+  margin-top: var(--space-lg);
+  padding: var(--space-2xs) var(--space-md);
+}
+.reminder {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-md);
+  padding-block: var(--space-sm);
+  border-bottom: 1px solid var(--color-rule);
+}
+.reminder:last-child {
+  border-bottom: 0;
+}
+.reminder-time {
+  font-size: var(--text-lg);
+  direction: ltr;
+}
+.reminder-who {
+  display: grid;
+}
+.reminder-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.reminder[data-sent] .reminder-who {
+  color: var(--color-muted);
+}
+.empty-note {
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  color: var(--color-muted);
+}
+
+/* ---------- a real shop: loading and the owner's PIN ---------- */
+.gate {
+  padding-block: var(--space-2xl);
+  display: grid;
+  justify-items: center;
+}
+.gate-note {
+  display: grid;
+  gap: var(--space-sm);
+  justify-items: center;
+  color: var(--color-muted);
+  text-align: center;
+}
+.gate .manage-form {
+  width: 100%;
+  display: grid;
+  gap: var(--space-sm);
+}
+.gate h1 {
+  font-size: var(--text-2xl);
+}
+
 /* ---------- narrow screens ---------- */
 @media (max-width: 60rem) {
   .book-layout,
@@ -1273,8 +1333,11 @@ textarea:hover {
   .label-short {
     display: inline;
   }
+  .owner-tabs {
+    gap: 0;
+  }
   .owner-tabs a {
-    padding: 0 var(--space-xs);
+    padding: 0 var(--space-2xs);
     font-size: var(--text-sm);
   }
   .sheet {
@@ -1289,6 +1352,13 @@ textarea:hover {
   }
   .desk {
     padding: var(--space-lg) var(--space-sm);
+  }
+  .reminder {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .reminder-action {
+    grid-column: 1 / -1;
+    justify-content: space-between;
   }
   .ledger th:nth-child(4),
   .ledger td:nth-child(4) {

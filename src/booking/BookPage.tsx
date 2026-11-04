@@ -5,14 +5,13 @@ import {
   BookingError,
   availableSlots,
   bookableDates,
-  book,
   clock,
   firstOpenDate,
   normalizePhone,
-  shopNow,
   staffFor,
 } from "../lib/schedule.ts";
-import { getShop, saveShop, useShop } from "../lib/store.ts";
+import { bookVisit, problemText } from "../lib/backend.ts";
+import { REMOTE, useShop } from "../lib/store.ts";
 import type { Booking } from "../lib/types.ts";
 import { Field, LanguagePicker } from "../ui.tsx";
 import { AppointmentCard } from "./AppointmentCard.tsx";
@@ -41,6 +40,7 @@ export function BookPage({ t, lang, setLang }: PageProps) {
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<{ name?: string; phone?: string; form?: string }>({});
   const [done, setDone] = useState<Booking | null>(null);
+  const [sending, setSending] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const service = shop.services.find((s) => s.id === serviceId);
@@ -64,8 +64,9 @@ export function BookPage({ t, lang, setLang }: PageProps) {
     if (done) cardRef.current?.focus();
   }, [done]);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (sending) return;
     // Every field problem at once, beside its field, before asking the engine.
     const fieldErrors = {
       name: customer.name.trim().length < 2 ? t.errors.name : undefined,
@@ -82,25 +83,26 @@ export function BookPage({ t, lang, setLang }: PageProps) {
       return;
     }
     if (start === null) return;
+    setSending(true);
     try {
-      const result = book(getShop(), { serviceId, staffChoice, date, start, name: customer.name, phone: customer.phone, note }, shopNow());
-      saveShop(result.shop);
+      const booking = await bookVisit({ serviceId, staffChoice, date, start, name: customer.name, phone: customer.phone, note });
       try {
         localStorage.setItem(CUSTOMER_KEY, JSON.stringify(customer));
       } catch {}
       setErrors({});
       setNote("");
-      setDone(result.booking);
+      setDone(booking);
       scrollTo({ top: 0 });
     } catch (cause) {
-      if (!(cause instanceof BookingError)) throw cause;
-      const message = t.errors[cause.code];
-      if (cause.code === "name") setErrors({ name: message });
-      else if (cause.code === "phone") setErrors({ phone: message });
+      const message = problemText(t, cause);
+      if (cause instanceof BookingError && cause.code === "name") setErrors({ name: message });
+      else if (cause instanceof BookingError && cause.code === "phone") setErrors({ phone: message });
       else {
         setErrors({ form: message });
-        if (cause.code === "slot-taken") setStart(null);
+        if (cause instanceof BookingError && cause.code === "slot-taken") setStart(null);
       }
+    } finally {
+      setSending(false);
     }
   }
 
@@ -331,15 +333,20 @@ export function BookPage({ t, lang, setLang }: PageProps) {
                 {errors.form}
               </p>
             )}
-            <button className="btn btn--ink btn--block" type="submit">
-              {start === null ? t.pickTime : t.confirm}
+            <button className="btn btn--ink btn--block" type="submit" aria-busy={sending || undefined}>
+              {sending ? t.confirming : start === null ? t.pickTime : t.confirm}
             </button>
           </aside>
         </form>
         <ShopInfo shop={shop} t={t} />
         <footer className="page-foot">
-          <a href="#/owner">{t.ownerLink}</a>
-          <span>{t.demoNote}</span>
+          {/* A real shop's owner keeps their own link to #/owner; customers don't need one. */}
+          {!REMOTE && (
+            <>
+              <a href="#/owner">{t.ownerLink}</a>
+              <span>{t.demoNote}</span>
+            </>
+          )}
         </footer>
       </main>
     </div>

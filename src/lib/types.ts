@@ -67,6 +67,8 @@ export interface Booking {
   note: string;
   status: BookingStatus;
   createdAt: string;
+  /** When the owner sent the day-before reminder, shop-local "YYYY-MM-DDTHH:MM". */
+  remindedAt?: string;
 }
 
 export interface Block {
