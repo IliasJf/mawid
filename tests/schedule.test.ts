@@ -10,7 +10,10 @@ import {
   cancelByCustomer,
   clock,
   firstOpenDate,
+  moveBooking,
+  moveByCustomer,
   normalizePhone,
+  revert,
   setStatus,
   shopNow,
   weekday,
@@ -147,4 +150,63 @@ test("the shop clock reads the shop's time zone, not the visitor's", () => {
     hourCycle: "h23",
   }).format(at);
   assert.equal(clock(shopNow(at).minutes), local);
+});
+
+test("the owner books walk-ins and calls inside the lead time and beyond the window", () => {
+  const shop = sampleShop(now);
+  const late: Now = { date: now.date, minutes: 16 * 60 + 5 };
+  // A customer can't take 16:15; the owner can, and without a phone number.
+  assert.throws(() => book(shop, { ...request, start: 16 * 60 + 15 }, late, ids(1)), BookingError);
+  const walkIn = book(shop, { ...request, start: 16 * 60 + 15, phone: "", by: "owner" }, late, ids(1));
+  assert.equal(walkIn.booking.customer.phone, "");
+  // A regular books three weeks ahead by phone.
+  const ahead = addDays(now.date, 21);
+  assert.equal(availableSlots(shop, "cut", "youssef", ahead, now).length, 0);
+  assert.ok(availableSlots(shop, "cut", "youssef", ahead, now, { by: "owner" }).length > 0);
+  // The owner still can't double-book or book yesterday.
+  assert.throws(() => book(walkIn.shop, { ...request, start: 16 * 60 + 15, by: "owner" }, late, ids(2)), BookingError);
+  assert.throws(() => book(shop, { ...request, date: addDays(now.date, -1), by: "owner" }, late, ids(3)), BookingError);
+  // The slot under way (16:00 at 16:05) is fine for a walk-in; one that's over is not.
+  assert.doesNotThrow(() => book(shop, { ...request, start: 16 * 60, by: "owner" }, late, ids(4)));
+  assert.throws(() => book(shop, { ...request, start: 15 * 60 + 45, by: "owner" }, late, ids(5)), BookingError);
+});
+
+test("a booking moves to a free time, keeps its code, and frees the old time", () => {
+  const first = book(sampleShop(now), request, now, ids(1));
+  const { shop, booking } = moveBooking(first.shop, first.booking.id, { date: now.date, start: 17 * 60, staffChoice: "any" }, now);
+  assert.equal(booking.code, first.booking.code);
+  assert.equal(booking.staffId, "youssef"); // "any" keeps the same barber when he's free
+  assert.equal(clock(booking.end), "17:30");
+  assert.ok(availableSlots(shop, "cut", "youssef", now.date, now).some((s) => s.start === 16 * 60));
+  // Moving onto itself, a slot its own old time overlaps, is fine.
+  assert.doesNotThrow(() => moveBooking(shop, booking.id, { date: now.date, start: 17 * 60 + 15, staffChoice: "youssef" }, now));
+  // Not onto someone else.
+  assert.throws(() => moveBooking(shop, booking.id, { date: now.date, start: 11 * 60, staffChoice: "youssef" }, now), BookingError);
+});
+
+test("customers move their own booking with code and phone, until it starts", () => {
+  const { shop, booking } = book(sampleShop(now), request, now, ids(1));
+  const moved = moveByCustomer(shop, booking.code, "+212612345678", { date: now.date, start: 18 * 60, staffChoice: "youssef" }, now);
+  assert.equal(clock(moved.booking.start), "18:00");
+  assert.throws(() => moveByCustomer(shop, booking.code, "0699999999", { date: now.date, start: 18 * 60, staffChoice: "youssef" }, now), BookingError);
+  const later: Now = { date: now.date, minutes: 16 * 60 + 10 };
+  assert.throws(
+    () => moveByCustomer(shop, booking.code, "0612345678", { date: addDays(now.date, 1), start: 12 * 60, staffChoice: "youssef" }, later),
+    (e: unknown) => e instanceof BookingError && e.code === "not-changeable",
+  );
+});
+
+test("undo puts back only what the change touched", () => {
+  const start = book(sampleShop(now), request, now, ids(1));
+  const after = setStatus(start.shop, start.booking.id, "done");
+  // Meanwhile a customer books in another tab.
+  const other = book(after, { ...request, start: 18 * 60 }, now, ids(2));
+  const undone = revert(other.shop, start.shop, after);
+  assert.equal(undone.bookings.find((b) => b.id === start.booking.id)?.status, "booked");
+  assert.ok(undone.bookings.some((b) => b.id === other.booking.id)); // not lost
+  // Undoing an added block removes it; undoing a removal brings it back.
+  const blocked = addBlock(start.shop, { staffId: "hamza", date: now.date, start: 19 * 60, end: 20 * 60, reason: "" }, "blk");
+  assert.ok(!revert(blocked, start.shop, blocked).blocks.some((b) => b.id === "blk"));
+  const unblocked = { ...blocked, blocks: blocked.blocks.filter((b) => b.id !== "blk") };
+  assert.ok(revert(unblocked, blocked, unblocked).blocks.some((b) => b.id === "blk"));
 });

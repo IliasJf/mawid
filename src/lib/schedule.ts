@@ -30,7 +30,19 @@ export type BookingErrorCode =
   | "overlaps-booking"
   | "block-range"
   | "not-found"
-  | "not-cancellable";
+  | "not-cancellable"
+  | "not-changeable";
+
+/**
+ * Who is asking. Customers get the lead time and the booking window; the owner
+ * books calls and walk-ins at any free time from today on.
+ */
+export type Actor = "customer" | "owner";
+export interface SlotOptions {
+  by?: Actor;
+  /** A booking being moved: its own time doesn't count as taken. */
+  ignore?: string;
+}
 
 // ---------- time ----------
 
@@ -89,10 +101,10 @@ export function workWindow(shop: Shop, staff: Staff, date: string): DayHours {
 }
 
 /** Bookings and blocks that occupy this person's time on this date. */
-export function busy(shop: Shop, staffId: string, date: string) {
+export function busy(shop: Shop, staffId: string, date: string, ignore?: string) {
   return [
     ...shop.bookings.filter(
-      (b) => b.staffId === staffId && b.date === date && b.status !== "cancelled",
+      (b) => b.staffId === staffId && b.date === date && b.status !== "cancelled" && b.id !== ignore,
     ),
     ...shop.blocks.filter((b) => b.staffId === staffId && b.date === date),
   ];
@@ -116,13 +128,18 @@ export function isFree(
   start: Minutes,
   end: Minutes,
   now: Now,
+  options: SlotOptions = {},
 ): boolean {
   const window = workWindow(shop, staff, date);
   if (!window || start < window[0] || end > window[1]) return false;
-  if (date === now.date && start < now.minutes + shop.business.leadMinutes)
-    return false;
   if (date < now.date) return false;
-  return !busy(shop, staff.id, date).some((b) =>
+  // Customers need the lead time; the owner can still take the slot that's under way, for a walk-in.
+  const earliest =
+    options.by === "owner"
+      ? now.minutes - shop.business.slotStep + 1
+      : now.minutes + shop.business.leadMinutes;
+  if (date === now.date && start < earliest) return false;
+  return !busy(shop, staff.id, date, options.ignore).some((b) =>
     overlaps(start, end, b.start, b.end),
   );
 }
@@ -140,11 +157,12 @@ export function availableSlots(
   staffChoice: string,
   date: string,
   now: Now,
+  options: SlotOptions = {},
 ): Slot[] {
   const service = shop.services.find((s) => s.id === serviceId && s.active);
   if (!service) return [];
   const last = addDays(now.date, shop.business.horizonDays - 1);
-  if (date < now.date || date > last) return [];
+  if (date < now.date || (options.by !== "owner" && date > last)) return [];
   const people = staffFor(shop, serviceId).filter(
     (s) => staffChoice === "any" || s.id === staffChoice,
   );
@@ -157,7 +175,7 @@ export function availableSlots(
       start + service.minutes <= window[1];
       start += shop.business.slotStep
     )
-      if (isFree(shop, person, date, start, start + service.minutes, now))
+      if (isFree(shop, person, date, start, start + service.minutes, now, options))
         slots.set(start, [...(slots.get(start) ?? []), person.id]);
   }
   // "Anyone" goes to whoever has the lightest day, so work spreads evenly.
@@ -191,7 +209,7 @@ export function normalizePhone(value: string): string | null {
   return match ? "212" + match[1] : null;
 }
 export const displayPhone = (p: string) =>
-  `0${p.slice(3, 4)} ${p.slice(4, 6)} ${p.slice(6, 8)} ${p.slice(8, 10)} ${p.slice(10, 12)}`;
+  !p ? "" : `0${p.slice(3, 4)} ${p.slice(4, 6)} ${p.slice(6, 8)} ${p.slice(8, 10)} ${p.slice(10, 12)}`;
 
 const CODE_LETTERS = "ACDEFGHJKMNPQRTUVWXY34679";
 export function newCode(taken: Set<string>, random = Math.random) {
@@ -217,8 +235,23 @@ export interface BookingRequest {
   date: string;
   start: Minutes;
   name: string;
+  /** May be empty when the owner books a walk-in. */
   phone: string;
   note?: string;
+  by?: Actor;
+}
+
+/** The date rules every booking and every move goes through. */
+function checkDate(shop: Shop, date: string, start: Minutes, now: Now, by: Actor) {
+  if (!isDate(date)) throw new BookingError("closed");
+  if (by === "customer" && date > addDays(now.date, shop.business.horizonDays - 1))
+    throw new BookingError("too-far");
+  if (
+    date < now.date ||
+    (date === now.date &&
+      start < (by === "customer" ? now.minutes + shop.business.leadMinutes : now.minutes - shop.business.slotStep + 1))
+  )
+    throw new BookingError("too-soon");
 }
 
 export function book(
@@ -231,17 +264,11 @@ export function book(
   if (!service) throw new BookingError("service");
   const name = request.name.trim().replace(/\s+/g, " ");
   if (name.length < 2 || name.length > 60) throw new BookingError("name");
-  const phone = normalizePhone(request.phone);
-  if (!phone) throw new BookingError("phone");
-  if (!isDate(request.date)) throw new BookingError("closed");
-  if (request.date > addDays(now.date, shop.business.horizonDays - 1))
-    throw new BookingError("too-far");
-  if (
-    request.date < now.date ||
-    (request.date === now.date &&
-      request.start < now.minutes + shop.business.leadMinutes)
-  )
-    throw new BookingError("too-soon");
+  const by = request.by ?? "customer";
+  const walkIn = by === "owner" && !request.phone.trim();
+  const phone = walkIn ? "" : normalizePhone(request.phone);
+  if (phone === null) throw new BookingError("phone");
+  checkDate(shop, request.date, request.start, now, by);
   if (
     request.staffChoice !== "any" &&
     !staffFor(shop, service.id).some((s) => s.id === request.staffChoice)
@@ -254,6 +281,7 @@ export function book(
     request.staffChoice,
     request.date,
     now,
+    { by },
   ).find((s) => s.start === request.start);
   if (!slot) throw new BookingError("slot-taken");
   const booking: Booking = {
@@ -280,17 +308,63 @@ export function findBooking(shop: Shop, code: string, phone: string) {
   );
 }
 
-/** A customer cancels with their code and phone, up to the lead time before it starts. */
+const started = (b: Booking, now: Now) =>
+  b.date < now.date || (b.date === now.date && b.start <= now.minutes);
+
+/** A customer cancels with their code and phone, until it starts. */
 export function cancelByCustomer(shop: Shop, code: string, phone: string, now: Now) {
   const booking = findBooking(shop, code, phone);
   if (!booking) throw new BookingError("not-found");
-  if (
-    booking.status !== "booked" ||
-    booking.date < now.date ||
-    (booking.date === now.date && booking.start <= now.minutes)
-  )
+  if (booking.status !== "booked" || started(booking, now))
     throw new BookingError("not-cancellable");
   return setStatus(shop, booking.id, "cancelled");
+}
+
+export interface Move {
+  date: string;
+  start: Minutes;
+  staffChoice: string;
+}
+
+/**
+ * A booking moves to another free time and keeps its code. With "any" it stays
+ * with the same barber when they're free then.
+ */
+export function moveBooking(
+  shop: Shop,
+  id: string,
+  move: Move,
+  now: Now,
+  by: Actor = "owner",
+): { shop: Shop; booking: Booking } {
+  const booking = shop.bookings.find((b) => b.id === id);
+  if (!booking) throw new BookingError("not-found");
+  if (booking.status !== "booked" || (by === "customer" && started(booking, now)))
+    throw new BookingError("not-changeable");
+  const service = shop.services.find((s) => s.id === booking.serviceId && s.active);
+  if (!service) throw new BookingError("service");
+  checkDate(shop, move.date, move.start, now, by);
+  if (move.staffChoice !== "any" && !staffFor(shop, service.id).some((s) => s.id === move.staffChoice))
+    throw new BookingError("staff");
+  const slot = availableSlots(shop, service.id, move.staffChoice, move.date, now, { by, ignore: id }).find(
+    (s) => s.start === move.start,
+  );
+  if (!slot) throw new BookingError("slot-taken");
+  const moved: Booking = {
+    ...booking,
+    date: move.date,
+    start: move.start,
+    end: move.start + service.minutes,
+    staffId: slot.staffIds.includes(booking.staffId) ? booking.staffId : slot.staffIds[0],
+  };
+  return { shop: { ...shop, bookings: shop.bookings.map((b) => (b.id === id ? moved : b)) }, booking: moved };
+}
+
+/** A customer moves their own booking with their code and phone, until it starts. */
+export function moveByCustomer(shop: Shop, code: string, phone: string, move: Move, now: Now) {
+  const booking = findBooking(shop, code, phone);
+  if (!booking) throw new BookingError("not-found");
+  return moveBooking(shop, booking.id, move, now, "customer");
 }
 
 export function setStatus(shop: Shop, id: string, status: BookingStatus): Shop {
@@ -334,6 +408,32 @@ export function updateService(shop: Shop, service: Service): Shop {
   return {
     ...shop,
     services: shop.services.map((s) => (s.id === service.id ? service : s)),
+  };
+}
+
+/**
+ * Undoes one change without losing others made since (a booking from another
+ * tab, say): only the records that change touched go back to how they were.
+ */
+export function revert(current: Shop, before: Shop, after: Shop): Shop {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+  function back<T extends { id: string }>(now: T[], was: T[], became: T[]): T[] {
+    let out = now;
+    for (const id of new Set([...was, ...became].map((x) => x.id))) {
+      const old = was.find((x) => x.id === id);
+      if (same(old, became.find((x) => x.id === id))) continue;
+      if (!old) out = out.filter((x) => x.id !== id);
+      else out = out.some((x) => x.id === id) ? out.map((x) => (x.id === id ? old : x)) : [...out, old];
+    }
+    return out;
+  }
+  return {
+    ...current,
+    business: same(before.business, after.business) ? current.business : before.business,
+    services: back(current.services, before.services, after.services),
+    staff: back(current.staff, before.staff, after.staff),
+    bookings: back(current.bookings, before.bookings, after.bookings),
+    blocks: back(current.blocks, before.blocks, after.blocks),
   };
 }
 

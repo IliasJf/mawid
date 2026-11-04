@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PageProps } from "../App.tsx";
-import { calendarFile, dayLong, dayNumber, dayShort, minutes, price, whatsappUrl } from "../lib/format.ts";
+import { calendarFile, dayLong, minutes, price, whatsappUrl } from "../lib/format.ts";
 import {
   BookingError,
   availableSlots,
@@ -16,6 +16,8 @@ import { getShop, saveShop, useShop } from "../lib/store.ts";
 import type { Booking } from "../lib/types.ts";
 import { Field, LanguagePicker } from "../ui.tsx";
 import { AppointmentCard } from "./AppointmentCard.tsx";
+import { ShopInfo } from "./ShopInfo.tsx";
+import { SlotPicker, useShopNow } from "./SlotPicker.tsx";
 
 const CUSTOMER_KEY = "mawid:customer";
 function rememberedCustomer() {
@@ -25,16 +27,6 @@ function rememberedCustomer() {
   } catch {
     return { name: "", phone: "" };
   }
-}
-
-/** Keeps "now" fresh, so slots inside the lead time drop off while the page is open. */
-function useShopNow() {
-  const [now, setNow] = useState(shopNow);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(shopNow()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
-  return now;
 }
 
 export function BookPage({ t, lang, setLang }: PageProps) {
@@ -59,7 +51,6 @@ export function BookPage({ t, lang, setLang }: PageProps) {
     [shop, serviceId, staffChoice, now, dates.join()],
   );
   const slots = slotsByDate.get(date) ?? [];
-  const nextDay = slots.length ? undefined : dates.find((d) => d > date && (slotsByDate.get(d)?.length ?? 0) > 0);
   const chosenSlot = slots.find((s) => s.start === start);
 
   // A choice that no longer fits (a service the barber doesn't do, a time just taken) is cleared.
@@ -73,12 +64,6 @@ export function BookPage({ t, lang, setLang }: PageProps) {
     if (done) cardRef.current?.focus();
   }, [done]);
 
-  const groups = [
-    { label: t.morning, items: slots.filter((s) => s.start < 12 * 60) },
-    { label: t.afternoon, items: slots.filter((s) => s.start >= 12 * 60 && s.start < 17 * 60) },
-    { label: t.evening, items: slots.filter((s) => s.start >= 17 * 60) },
-  ].filter((g) => g.items.length);
-
   function submit(e: React.FormEvent) {
     e.preventDefault();
     // Every field problem at once, beside its field, before asking the engine.
@@ -89,7 +74,11 @@ export function BookPage({ t, lang, setLang }: PageProps) {
     };
     if (fieldErrors.name || fieldErrors.phone || fieldErrors.form) {
       setErrors(fieldErrors);
-      document.getElementById(fieldErrors.form ? "summary-title" : fieldErrors.name ? "name" : "phone")?.focus();
+      // No time yet: take them to the times, where the choice is made.
+      const target = fieldErrors.form
+        ? document.querySelector<HTMLElement>('#step-time input[name="slot"], #step-time .day[aria-checked="true"]')
+        : document.getElementById(fieldErrors.name ? "name" : "phone");
+      target?.focus();
       return;
     }
     if (start === null) return;
@@ -120,7 +109,10 @@ export function BookPage({ t, lang, setLang }: PageProps) {
       <div className="topbar-inner">
         <span className="wordmark">{shop.business.name}</span>
         <nav className="topbar-actions" aria-label={t.bookTitle}>
-          <a href="#/manage">{t.manageLink}</a>
+          <a href="#/manage">
+            <span className="label-long">{t.manageLink}</span>
+            <span className="label-short">{t.manageShort}</span>
+          </a>
           <LanguagePicker t={t} lang={lang} setLang={setLang} />
         </nav>
       </div>
@@ -138,9 +130,15 @@ export function BookPage({ t, lang, setLang }: PageProps) {
       staff: staff.name,
       code: done.code,
     });
-    const ics = URL.createObjectURL(
-      new Blob([calendarFile(done, shop.business, doneService, staff, doneService.name[lang])], { type: "text/calendar" }),
-    );
+    // The file is made on tap, so no object URL is left behind on every render.
+    const downloadCalendar = () => {
+      const url = URL.createObjectURL(
+        new Blob([calendarFile(done, shop.business, doneService, staff, doneService.name[lang])], { type: "text/calendar" }),
+      );
+      const link = Object.assign(document.createElement("a"), { href: url, download: `mawid-${done.code}.ics` });
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
     return (
       <div className="page page-book">
         {header}
@@ -155,9 +153,9 @@ export function BookPage({ t, lang, setLang }: PageProps) {
               <a className="btn btn--ink" href={whatsappUrl(shop.business.whatsapp, message)} target="_blank" rel="noopener noreferrer">
                 {t.sendWhatsApp}
               </a>
-              <a className="btn btn--card" href={ics} download={`mawid-${done.code}.ics`}>
+              <button className="btn btn--card" type="button" onClick={downloadCalendar}>
                 {t.addCalendar}
-              </a>
+              </button>
               <button className="btn btn--quiet" type="button" onClick={() => setDone(null)}>
                 {t.bookAnother}
               </button>
@@ -175,7 +173,7 @@ export function BookPage({ t, lang, setLang }: PageProps) {
         <div className="shop-intro">
           <h1>{t.bookTitle}</h1>
           <p className="lead">{shop.business.tagline[lang]}</p>
-          <p className="shop-address">{shop.business.address}</p>
+          <ShopInfo shop={shop} t={t} compact />
         </div>
         <form className="book-layout" onSubmit={submit} noValidate>
           <div className="book-steps">
@@ -233,67 +231,27 @@ export function BookPage({ t, lang, setLang }: PageProps) {
               </div>
             </fieldset>
 
-            <fieldset className="step">
+            <fieldset className="step" id="step-time">
               <legend>
                 <span className="step-n fig">3</span> {t.stepTime}
               </legend>
-              <div className="day-strip" role="radiogroup" aria-label={t.stepTime}>
-                {dates.map((d) => {
-                  const open = (slotsByDate.get(d)?.length ?? 0) > 0;
-                  return (
-                    <button
-                      key={d}
-                      type="button"
-                      role="radio"
-                      aria-checked={d === date}
-                      aria-label={`${dayLong(t, d)}${open ? "" : `, ${t.closed}`}`}
-                      className="day"
-                      data-open={open || undefined}
-                      onClick={() => {
-                        setDate(d);
-                        setStart(null);
-                      }}
-                    >
-                      <span className="day-name">{d === now.date ? t.today : dayShort(t, d)}</span>
-                      <span className="day-num fig">{dayNumber(t, d)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="day-label">{dayLong(t, date)}</p>
-              {groups.length ? (
-                groups.map((g) => (
-                  <div className="slot-group" key={g.label}>
-                    <p className="slot-group-label">{g.label}</p>
-                    <div className="slots">
-                      {g.items.map((s) => (
-                        <label key={s.start} className="slot">
-                          <input
-                            type="radio"
-                            name="slot"
-                            value={s.start}
-                            checked={start === s.start}
-                            onChange={() => {
-                              setStart(s.start);
-                              setErrors((e) => ({ ...e, form: undefined }));
-                            }}
-                          />
-                          <span className="fig">{clock(s.start)}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="empty-slots">
-                  <p>{t.noSlots}</p>
-                  {nextDay && (
-                    <button type="button" className="link-button" onClick={() => setDate(nextDay)}>
-                      {t.nextFree(dayLong(t, nextDay))} {t.showDay}
-                    </button>
-                  )}
-                </div>
-              )}
+              <SlotPicker
+                t={t}
+                name="slot"
+                today={now.date}
+                dates={dates}
+                slotsByDate={slotsByDate}
+                date={date}
+                start={start}
+                onDate={(d) => {
+                  setDate(d);
+                  setStart(null);
+                }}
+                onStart={(s) => {
+                  setStart(s);
+                  setErrors((e) => ({ ...e, form: undefined }));
+                }}
+              />
             </fieldset>
 
             <fieldset className="step">
@@ -374,10 +332,11 @@ export function BookPage({ t, lang, setLang }: PageProps) {
               </p>
             )}
             <button className="btn btn--ink btn--block" type="submit">
-              {t.confirm}
+              {start === null ? t.pickTime : t.confirm}
             </button>
           </aside>
         </form>
+        <ShopInfo shop={shop} t={t} />
         <footer className="page-foot">
           <a href="#/owner">{t.ownerLink}</a>
           <span>{t.demoNote}</span>

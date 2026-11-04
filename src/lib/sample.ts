@@ -90,8 +90,8 @@ export function sampleShop(now: Now): Shop {
       booking("s9", "UY6KCH", "cut", "youssef", -1, "19:00", 30, "Ilyas Berrada", "212669234509", "no-show"),
     ],
     blocks: [
-      { id: "b1", staffId: "youssef", date: day(0), start: 14 * 60, end: 15 * 60, reason: "Lunch" },
-      { id: "b2", staffId: "hamza", date: day(0), start: 14 * 60 + 30, end: 15 * 60 + 30, reason: "Lunch" },
+      { id: "b1", staffId: "youssef", date: day(0), start: 14 * 60, end: 15 * 60, reason: "" },
+      { id: "b2", staffId: "hamza", date: day(0), start: 14 * 60 + 30, end: 15 * 60 + 30, reason: "" },
     ],
   };
 }

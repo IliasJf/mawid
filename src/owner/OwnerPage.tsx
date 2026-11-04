@@ -7,13 +7,18 @@ import {
   BookingError,
   addBlock,
   addDays,
+  availableSlots,
+  book,
   clock,
   displayPhone,
   isDate,
+  moveBooking,
   parseClock,
   removeBlock,
+  revert,
   setStatus,
   shopNow,
+  staffFor,
   updateService,
   weekday,
   workWindow,
@@ -27,7 +32,7 @@ const TABS: Tab[] = ["agenda", "bookings", "services", "hours"];
 
 interface Toast {
   message: string;
-  undo?: Shop;
+  undo?: { before: Shop; after: Shop };
 }
 
 export function OwnerPage({ t, lang, setLang, route }: PageProps) {
@@ -44,7 +49,7 @@ export function OwnerPage({ t, lang, setLang, route }: PageProps) {
   const commit = (next: Shop, message: string, undoable = false) => {
     const before = getShop();
     saveShop(next);
-    setToast({ message, undo: undoable ? before : undefined });
+    setToast({ message, undo: undoable ? { before, after: next } : undefined });
   };
   const tabLabel: Record<Tab, string> = {
     agenda: t.agenda,
@@ -100,7 +105,8 @@ export function OwnerPage({ t, lang, setLang, route }: PageProps) {
               <button
                 type="button"
                 onClick={() => {
-                  saveShop(toast.undo!);
+                  // Only this change goes back; a booking made meanwhile stays.
+                  saveShop(revert(getShop(), toast.undo!.before, toast.undo!.after));
                   setToast(null);
                 }}
               >
@@ -156,6 +162,8 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
   const day = isDate(route.query.get("day") ?? "") ? route.query.get("day")! : now.date;
   const setDay = (d: string) => go("owner/agenda", d === now.date ? undefined : { day: d }, true);
   const [selected, setSelected] = useState<string | null>(null);
+  const [panel, setPanel] = useState<"new" | "block">("new");
+  const [moving, setMoving] = useState(false);
   const staff = shop.staff.filter((s) => s.active);
   const hours: DayHours = shop.business.hours[weekday(day)];
   const [open, close] = hours ?? [9 * 60, 21 * 60];
@@ -181,6 +189,18 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
           </button>
           <button type="button" className="btn btn--small btn--card" aria-label={t.nextDay} onClick={() => setDay(addDays(day, 1))}>
             <span aria-hidden="true">{t.dir === "rtl" ? "‹" : "›"}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn--small btn--ink"
+            onClick={() => {
+              setSelected(null);
+              setPanel("new");
+              // After the panel renders: on a phone it sits below the sheet.
+              requestAnimationFrame(() => document.getElementById("nb-service")?.focus());
+            }}
+          >
+            {t.newBooking}
           </button>
         </div>
       </div>
@@ -236,19 +256,26 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
                   {dayBookings
                     .filter((b) => b.staffId === s.id && b.status !== "cancelled")
                     .map((b) => (
-                      <button
+                      <div
                         role="listitem"
-                        type="button"
                         key={b.id}
-                        className="sheet-booking"
-                        data-status={b.status}
-                        aria-pressed={selected === b.id}
+                        className="sheet-item"
                         style={{ top: (b.start - open) * PX, height: Math.max((b.end - b.start) * PX, 28) }}
-                        onClick={() => setSelected(selected === b.id ? null : b.id)}
                       >
-                        <span className="fig">{clock(b.start)}</span> <strong>{b.customer.name}</strong>
-                        <span className="sheet-booking-service">{serviceName(b)}</span>
-                      </button>
+                        <button
+                          type="button"
+                          className="sheet-booking"
+                          data-status={b.status}
+                          aria-pressed={selected === b.id}
+                          onClick={() => {
+                            setSelected(selected === b.id ? null : b.id);
+                            setMoving(false);
+                          }}
+                        >
+                          <span className="fig">{clock(b.start)}</span> <strong>{b.customer.name}</strong>
+                          <span className="sheet-booking-service">{serviceName(b)}</span>
+                        </button>
+                      </div>
                     ))}
                 </div>
               );
@@ -265,11 +292,23 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
 
         <div className="agenda-side">
           {chosen ? (
-            <div className="detail stock">
-              <p className="detail-time fig">
-                {clock(chosen.start)} – {clock(chosen.end)}
-              </p>
-              <h2>{chosen.customer.name}</h2>
+            <div
+              className="detail stock"
+              role="region"
+              aria-labelledby="detail-name"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSelected(null);
+              }}
+            >
+              <div className="detail-top">
+                <p className="detail-time fig">
+                  {clock(chosen.start)} – {clock(chosen.end)}
+                </p>
+                <button type="button" className="detail-close" aria-label={t.close} onClick={() => setSelected(null)}>
+                  <span aria-hidden="true">×</span>
+                </button>
+              </div>
+              <h2 id="detail-name">{chosen.customer.name}</h2>
               <dl className="detail-lines">
                 <div>
                   <dt>{t.service}</dt>
@@ -282,9 +321,13 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
                 <div>
                   <dt>{t.phone}</dt>
                   <dd>
-                    <a dir="ltr" href={`tel:+${chosen.customer.phone}`}>
-                      {displayPhone(chosen.customer.phone)}
-                    </a>
+                    {chosen.customer.phone ? (
+                      <a dir="ltr" href={`tel:+${chosen.customer.phone}`}>
+                        {displayPhone(chosen.customer.phone)}
+                      </a>
+                    ) : (
+                      t.walkIn
+                    )}
                   </dd>
                 </div>
                 <div>
@@ -301,14 +344,245 @@ function Agenda({ shop, t, lang, route, commit }: TabProps) {
               <p className="status-tag" data-status={chosen.status}>
                 {t.status[chosen.status]}
               </p>
-              <StatusActions booking={chosen} t={t} commit={commit} />
+              {moving ? (
+                <MoveForm
+                  shop={shop}
+                  t={t}
+                  booking={chosen}
+                  commit={commit}
+                  onDone={(date) => {
+                    setMoving(false);
+                    if (date !== day) setDay(date);
+                  }}
+                />
+              ) : (
+                <>
+                  <StatusActions booking={chosen} t={t} commit={commit} />
+                  {chosen.status === "booked" && (
+                    <button type="button" className="link-button" onClick={() => setMoving(true)}>
+                      {t.moveTitle}
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           ) : (
-            <BlockForm shop={shop} t={t} day={day} commit={commit} />
+            <div className="side-panel">
+              <div className="groove" role="radiogroup" aria-label={t.agenda}>
+                <button type="button" role="radio" aria-checked={panel === "new"} onClick={() => setPanel("new")}>
+                  {t.newBooking}
+                </button>
+                <button type="button" role="radio" aria-checked={panel === "block"} onClick={() => setPanel("block")}>
+                  {t.blockTime}
+                </button>
+              </div>
+              {panel === "new" ? (
+                <NewBookingForm shop={shop} t={t} lang={lang} day={day} commit={commit} onAdded={setSelected} />
+              ) : (
+                <BlockForm shop={shop} t={t} day={day} commit={commit} />
+              )}
+            </div>
           )}
         </div>
       </div>
     </section>
+  );
+}
+
+/** The owner books a call or a walk-in on the day they're looking at. */
+function NewBookingForm({
+  shop,
+  t,
+  lang,
+  day,
+  commit,
+  onAdded,
+}: {
+  shop: Shop;
+  t: Copy;
+  lang: Lang;
+  day: string;
+  commit: TabProps["commit"];
+  onAdded: (id: string) => void;
+}) {
+  const services = shop.services.filter((s) => s.active);
+  const [form, setForm] = useState({ serviceId: services[0]?.id ?? "", staffChoice: "any", start: "", name: "", phone: "" });
+  const [error, setError] = useState("");
+  const now = shopNow();
+  const slots = availableSlots(shop, form.serviceId, form.staffChoice, day, now, { by: "owner" });
+  const start = slots.some((s) => String(s.start) === form.start) ? form.start : String(slots[0]?.start ?? "");
+  return (
+    <form
+      className="block-form stock"
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        try {
+          const result = book(
+            getShop(),
+            { serviceId: form.serviceId, staffChoice: form.staffChoice, date: day, start: Number(start), name: form.name, phone: form.phone, by: "owner" },
+            shopNow(),
+          );
+          commit(result.shop, t.bookingAdded, true);
+          setError("");
+          setForm((f) => ({ ...f, start: "", name: "", phone: "" }));
+          onAdded(result.booking.id);
+        } catch (cause) {
+          if (cause instanceof BookingError) setError(t.errors[cause.code]);
+          else throw cause;
+        }
+      }}
+    >
+      <h2>
+        {t.newBooking}
+        <span className="form-sub">{dayLong(t, day)}</span>
+      </h2>
+      <Field label={t.service} id="nb-service">
+        <select
+          id="nb-service"
+          value={form.serviceId}
+          onChange={(e) => {
+            const serviceId = e.target.value;
+            const keeps = staffFor(shop, serviceId).some((s) => s.id === form.staffChoice);
+            setForm({ ...form, serviceId, staffChoice: keeps ? form.staffChoice : "any" });
+          }}
+        >
+          {services.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name[lang]} · {minutes(t, s.minutes)}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div className="field-pair field-pair--wide-first">
+        <Field label={t.barber} id="nb-staff">
+          <select id="nb-staff" value={form.staffChoice} onChange={(e) => setForm({ ...form, staffChoice: e.target.value })}>
+            <option value="any">{t.anyone}</option>
+            {staffFor(shop, form.serviceId).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t.time} id="nb-time">
+          <select id="nb-time" value={start} disabled={!slots.length} onChange={(e) => setForm({ ...form, start: e.target.value })}>
+            {slots.map((s) => (
+              <option key={s.start} value={s.start}>
+                {clock(s.start)}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      {!slots.length && <p className="field-hint">{t.noTimes}</p>}
+      <Field label={t.customerName} id="nb-name">
+        <input id="nb-name" maxLength={60} autoComplete="off" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+      </Field>
+      <Field label={t.phone} id="nb-phone" hint={t.walkInHint} optional={t.optional}>
+        <input
+          id="nb-phone"
+          type="tel"
+          inputMode="tel"
+          dir="ltr"
+          autoComplete="off"
+          placeholder="06 12 34 56 78"
+          aria-describedby="nb-phone-hint"
+          value={form.phone}
+          onChange={(e) => setForm({ ...form, phone: e.target.value })}
+        />
+      </Field>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <button className="btn btn--ink btn--block" type="submit" disabled={!slots.length}>
+        {t.addBooking}
+      </button>
+    </form>
+  );
+}
+
+/** Moves a booking to another free time, any day from today, keeping its code. */
+function MoveForm({
+  shop,
+  t,
+  booking,
+  commit,
+  onDone,
+}: {
+  shop: Shop;
+  t: Copy;
+  booking: Booking;
+  commit: TabProps["commit"];
+  onDone: (date: string) => void;
+}) {
+  const now = shopNow();
+  const [form, setForm] = useState({ date: booking.date < now.date ? now.date : booking.date, staffChoice: booking.staffId, start: "" });
+  const [error, setError] = useState("");
+  const slots = isDate(form.date)
+    ? availableSlots(shop, booking.serviceId, form.staffChoice, form.date, now, { by: "owner", ignore: booking.id }).filter(
+        (s) => !(form.date === booking.date && s.start === booking.start),
+      )
+    : [];
+  const start = slots.some((s) => String(s.start) === form.start) ? form.start : String(slots[0]?.start ?? "");
+  return (
+    <form
+      className="move-form"
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        try {
+          const result = moveBooking(getShop(), booking.id, { date: form.date, start: Number(start), staffChoice: form.staffChoice }, shopNow());
+          commit(result.shop, t.bookingMoved, true);
+          onDone(result.booking.date);
+        } catch (cause) {
+          if (cause instanceof BookingError) setError(t.errors[cause.code]);
+          else throw cause;
+        }
+      }}
+    >
+      <h3>{t.moveTitle}</h3>
+      <Field label={t.date} id="mv-date">
+        <input id="mv-date" type="date" min={now.date} value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+      </Field>
+      <div className="field-pair field-pair--wide-first">
+        <Field label={t.barber} id="mv-staff">
+          <select id="mv-staff" value={form.staffChoice} onChange={(e) => setForm({ ...form, staffChoice: e.target.value })}>
+            <option value="any">{t.anyone}</option>
+            {staffFor(shop, booking.serviceId).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label={t.time} id="mv-time">
+          <select id="mv-time" value={start} disabled={!slots.length} onChange={(e) => setForm({ ...form, start: e.target.value })}>
+            {slots.map((s) => (
+              <option key={s.start} value={s.start}>
+                {clock(s.start)}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      {!slots.length && <p className="field-hint">{t.noTimes}</p>}
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="status-actions">
+        <button className="btn btn--small btn--ink" type="submit" disabled={!slots.length}>
+          {t.saveMoveOwner}
+        </button>
+        <button className="btn btn--small btn--quiet" type="button" onClick={() => onDone(booking.date)}>
+          {t.keepTime}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -438,9 +712,13 @@ function Bookings({ shop, t, lang, route, commit }: TabProps) {
                   </td>
                   <td>
                     {b.customer.name}
-                    <a className="fig cell-sub" dir="ltr" href={`tel:+${b.customer.phone}`}>
-                      {displayPhone(b.customer.phone)}
-                    </a>
+                    {b.customer.phone ? (
+                      <a className="fig cell-sub" dir="ltr" href={`tel:+${b.customer.phone}`}>
+                        {displayPhone(b.customer.phone)}
+                      </a>
+                    ) : (
+                      <span className="cell-sub">{t.walkIn}</span>
+                    )}
                   </td>
                   <td>{shop.services.find((s) => s.id === b.serviceId)?.name[lang]}</td>
                   <td>{shop.staff.find((s) => s.id === b.staffId)?.name}</td>

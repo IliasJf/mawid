@@ -413,11 +413,13 @@ textarea:hover {
   scrollbar-width: thin;
 }
 .day {
-  flex: 0 0 64px;
+  flex: 0 0 auto;
+  min-width: 64px;
+  padding-inline: var(--space-2xs);
   display: grid;
   justify-items: center;
   gap: var(--space-3xs);
-  padding: var(--space-xs) 0;
+  padding-block: var(--space-xs);
   border: 0;
   border-radius: var(--radius-card);
   background: transparent;
@@ -677,6 +679,77 @@ textarea:hover {
 .manage-result .desk {
   width: 100%;
 }
+.manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+.change-time {
+  width: 100%;
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+}
+.change-time h2 {
+  font-size: var(--text-lg);
+}
+
+/* ---------- customer: where the shop is ---------- */
+.shop-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2xs) var(--space-md);
+}
+.shop-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs) var(--space-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+.visit {
+  margin-top: var(--space-2xl);
+  padding-top: var(--space-xl);
+  border-top: 1px solid var(--color-rule);
+}
+.visit h2 {
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-md);
+}
+.visit h3 {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-muted);
+  margin-bottom: var(--space-2xs);
+}
+.visit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-lg);
+}
+.visit-grid p {
+  margin-bottom: var(--space-xs);
+}
+.visit-hours {
+  display: grid;
+  gap: var(--space-3xs);
+  max-width: 22rem;
+}
+.visit-hours div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+.visit-hours dd {
+  direction: ltr;
+}
+.visit-hours [aria-current="date"] {
+  font-weight: 600;
+}
+.label-short {
+  display: none;
+}
 
 /* ---------- owner ---------- */
 .owner-tabs {
@@ -729,6 +802,8 @@ textarea:hover {
   margin-top: var(--space-lg);
 }
 .sheet {
+  --hours-w: 52px;
+  --col-min: 150px;
   position: relative;
   padding: var(--space-md) var(--space-md) var(--space-lg);
   overflow-x: auto;
@@ -736,8 +811,16 @@ textarea:hover {
 .sheet-head,
 .sheet-body {
   display: grid;
-  grid-template-columns: 52px repeat(var(--cols), minmax(150px, 1fr));
-  min-width: calc(52px + var(--cols) * 150px);
+  grid-template-columns: var(--hours-w) repeat(var(--cols), minmax(var(--col-min), 1fr));
+  min-width: calc(var(--hours-w) + var(--cols) * var(--col-min));
+}
+/* The hour labels stay put when a wide team scrolls sideways. */
+.sheet-head > span:first-child,
+.sheet-hours {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: var(--z-raised);
+  background: var(--color-cotton);
 }
 .sheet-head {
   padding-bottom: var(--space-xs);
@@ -780,6 +863,16 @@ textarea:hover {
   position: absolute;
   inset-inline: 0;
   background: repeating-linear-gradient(-45deg, var(--color-off) 0 6px, transparent 6px 12px);
+}
+.sheet-item {
+  position: absolute;
+  inset-inline: 4px;
+}
+.sheet-item .sheet-booking {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
 }
 .sheet-booking,
 .sheet-block {
@@ -851,7 +944,7 @@ textarea:hover {
 }
 .sheet-now {
   position: absolute;
-  inset-inline: 52px 0;
+  inset-inline: var(--hours-w) 0;
   border-top: 2px solid var(--color-accent-2);
   pointer-events: none;
 }
@@ -875,6 +968,53 @@ textarea:hover {
 .detail h2,
 .block-form h2 {
   font-size: var(--text-lg);
+}
+.detail-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.detail-close {
+  min-width: 40px;
+  min-height: 40px;
+  border: 0;
+  border-radius: var(--radius-input);
+  background: transparent;
+  color: var(--color-muted);
+  font-size: var(--text-xl);
+  line-height: 1;
+  cursor: pointer;
+}
+.detail-close:hover {
+  color: var(--color-ink);
+  background: var(--color-paper-3);
+}
+.side-panel {
+  display: grid;
+  gap: var(--space-sm);
+}
+.side-panel .groove {
+  justify-self: start;
+}
+.form-sub {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--color-muted);
+}
+/* Barber and time: the barber name needs the room, a time is five figures. */
+.field-pair--wide-first {
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+}
+.move-form {
+  display: grid;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--color-rule);
+}
+.move-form h3 {
+  font-size: var(--text-base);
 }
 .detail-time {
   font-size: var(--text-xl);
@@ -1101,6 +1241,18 @@ textarea:hover {
     margin-inline: calc(-1 * var(--space-sm));
     scrollbar-width: none;
   }
+  /* On a phone the side panel sits below a tall sheet, so a chosen booking opens as a sheet from the bottom. */
+  .agenda-side .detail {
+    position: fixed;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: var(--z-modal);
+    max-height: 78vh;
+    overflow-y: auto;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    padding: var(--space-md) var(--gutter) var(--space-lg);
+    box-shadow: 0 -12px 32px rgb(0 0 0 / 0.18);
+  }
 }
 @media (max-width: 40rem) {
   .topbar-actions a {
@@ -1111,6 +1263,24 @@ textarea:hover {
   }
   .topbar-inner {
     gap: var(--space-sm);
+  }
+  .wordmark {
+    white-space: nowrap;
+  }
+  .label-long {
+    display: none;
+  }
+  .label-short {
+    display: inline;
+  }
+  .owner-tabs a {
+    padding: 0 var(--space-xs);
+    font-size: var(--text-sm);
+  }
+  .sheet {
+    --hours-w: 2.5rem;
+    --col-min: 5.75rem;
+    padding-inline: var(--space-xs);
   }
   .shop-intro h1,
   .booked-title,

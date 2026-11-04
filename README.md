@@ -10,11 +10,14 @@
 - Services with duration and price in dirhams, a choice of barber or "first available", two weeks of days and the free times on each.
 - Name and a Moroccan mobile number, accepted in any common spelling (`06 12 34 56 78`, `+212 6…`, `00212…`).
 - An appointment card with a short booking code, a prefilled WhatsApp message to the shop, and an `.ics` file for the phone's calendar.
-- Change or cancel with the code and the same number, until the start time.
+- Move to another free time or cancel, with the code and the same number, until the start time. The code stays the same.
+- The shop's address with a map link, call and WhatsApp buttons, and the opening hours for the week.
 - English, French and Arabic (right to left), light and dark mode following the phone.
 
 **For the owner**
-- **Agenda:** the day as a sheet per barber, with breaks, time off and a line for now. Tap a booking to call the customer or mark it done, no-show or cancelled, with undo.
+- **Agenda:** the day as a sheet per barber, with breaks, time off and a line for now. Tap a booking to call the customer, mark it done, no-show or cancelled, or move it to another day, time or barber. On a phone the booking opens as a sheet from the bottom.
+- **Phone calls and walk-ins:** the owner adds a booking from the agenda. The phone number is optional for a walk-in, and the owner isn't held to the lead time or the two-week window.
+- **Undo** on every change. It puts back only what that change touched, so a booking made in the meantime isn't lost.
 - **Block time** for lunch or an errand. It refuses to cover a booked customer.
 - **Bookings:** upcoming, past or all, searchable by name, phone or code. Filters live in the URL.
 - **Services and hours:** edit price, duration and what's offered; set opening hours per weekday.
@@ -27,7 +30,7 @@
 - Slots start on a 15-minute grid. A service must fit entirely before closing and must not overlap a booking or blocked time.
 - Nothing inside the lead time (30 minutes) and nothing beyond the 14-day window.
 - "First available" gives the booking to whoever has the lightest day.
-- The slot is checked again at the moment of booking, so two people can't take the same time.
+- The slot is checked again at the moment of booking, so two people can't take the same time. A moved booking doesn't block its own old time.
 - Times are the shop's wall clock in `Africa/Casablanca`, read through `Intl`, so Morocco's Ramadan clock change is handled by the time zone, not by a hard-coded offset.
 
 ## Run it
