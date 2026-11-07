@@ -1,4 +1,5 @@
 # Mawid
+[![Checks](https://github.com/IliasJf/mawid/actions/workflows/ci.yml/badge.svg)](https://github.com/IliasJf/mawid/actions/workflows/ci.yml)
 
 **Mawid** (موعد, Arabic for "appointment") is online booking for small businesses in Morocco: barbershops, salons and small clinics. Customers open the link from Instagram or WhatsApp, pick a service, a person and a time on their phone, and get a confirmation they can send to the shop on WhatsApp. The owner sees the day as a sheet, one column per person.
 
